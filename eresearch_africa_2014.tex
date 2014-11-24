@@ -1,0 +1,536 @@
+    %% LaTeX Beamer presentation template (requires beamer package)
+%% see http://bitbucket.org/rivanvx/beamer/wiki/Home
+%% idea contributed by H. Turgut Uyar
+%% template based on a template by Till Tantau
+%% this template is still evolving - it might differ in future releases!
+
+\documentclass[handout]{beamer}
+
+\mode<presentation>
+{
+\usetheme{Warsaw}
+
+\setbeamercovered{transparent}
+}
+
+\usepackage[english]{babel}
+\usepackage[utf8x]{inputenc}
+\usepackage{pgf}
+\usepackage{setspace}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage[round]{natbib}
+\renewcommand{\cite}[1]{{\small\citep{#1}}} 
+\def\newblock{\hskip .11em plus .33em minus .07em}
+\usepackage{numprint}
+
+% font definitions, try \usepackage{ae} instead of the following
+% three lines if you don't like this look
+\usepackage{mathptmx}
+\usepackage[scaled=.90]{helvet}
+\usepackage{courier}
+
+
+\usepackage[T1]{fontenc}
+
+\pgfdeclareimage[height=0.15\textheight]{UWC-logo}{images/UWClogo.png}
+\logo{\href{http://www.uwc.ac.za}{\pgfuseimage{UWC-logo}}}
+
+% \setbeamertemplate{sidebar left}{%
+%    \vfill%
+%    \rlap{\hskip0.1cm%
+%          \href{http://www.uwc.ac.za}%
+%          {\pgfuseimage{UWC-logo}}}%
+%    \vskip2pt%
+%    \llap{\usebeamertemplate***{navigation symbols}\hskip0.1cm}%
+%    \vskip2pt%
+% } 
+
+\title{Building a cluster filesystem}
+
+\subtitle{Using distributed, directly-attached storage}
+
+% - Use the \inst{?} command only if the authors have different
+%   affiliation.
+%\author{F.~Author\inst{1} \and S.~Another\inst{2}}
+\author{\texorpdfstring{Peter~van~Heusden\newline
+~pvh@sanbi.ac.za}{Peter~van~Heusden}}
+
+
+% - Use the \inst command only if there are several affiliations.
+% - Keep it simple, no one is interested in your street address.
+\institute[UWC]
+{
+Information and Communication Services\\
+University of the Western Cape\\
+Bellville, South Africa\\
+\insertlogo}
+
+\date{November 2014}
+
+%\beamerdefaultoverlayspecification{<+->}
+
+
+% This is only inserted into the PDF information catalog. Can be left
+% out.
+% \subject{distribu}
+
+
+
+% If you have a file called "university-logo-filename.xxx", where xxx
+% is a graphic format that can be processed by latex or pdflatex,
+% resp., then you can add a logo as follows:
+
+% \pgfdeclareimage[height=0.5cm]{university-logo}{university-logo-filename}
+% \logo{\pgfuseimage{university-logo}}
+
+
+
+% Delete this, if you do not want the table of contents to pop up at
+% the beginning of each subsection:
+% \AtBeginSubsection[]
+% {
+% \begin{frame}<beamer>
+% \frametitle{Outline}
+% \tableofcontents[currentsection,currentsubsection]
+% \end{frame}
+% }
+
+% If you wish to uncover everything in a step-wise fashion, uncomment
+% the following command:
+
+%\beamerdefaultoverlayspecification{<+->}
+\setbeamertemplate{bibliography item}[text]
+
+\begin{document}
+
+\begin{frame}
+\logo{}
+\titlepage
+\end{frame}
+
+\section{Executive Summary}
+\begin{frame}
+\frametitle{Executive Summary}
+\begin{itemize}
+\item UWC Astrophysics cluster stores working data on distributed, directly attached storage, not SAN
+\pause
+\item Two systems (both open source) in use: Ceph and GlusterFS
+\pause
+\begin{itemize}
+\item Ceph allows for great flexibility in storage configuration but CephFS lacks stability at present
+\pause
+\item GlusterFS is easy to deploy and stable but has slow metadata performance and lacks flexibility in storage configuration
+\end{itemize}
+\pause
+\item Both options install with ease on CentOS filesystem and allow for \emph{scale out} construction of storage for cluster
+\pause
+\item 170TB+ of storage in active use, with GlusterFS (133 TB) rock solid since deployment (mid 2014) and resilient to transient node failure
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{The UWC Astrophysics cluster}
+\begin{itemize}
+ \item Two clusters, built from SuperMicro servers
+ \begin{itemize}
+ \item 4 AMD Opteron CPUs per node, total of 48 cores
+ \item 256 GB RAM per node
+ \item 15 TB available disk per node
+ \item 10 GbE networking
+ \item Management node with 24 GB RAM, dual Opteron, 6 TB disk for each cluster
+ \end{itemize}
+ \begin{enumerate}
+ \pause
+ \item \emph{Timon:} 4 nodes
+ \pause
+ \item \emph{Pumbaa:} 19 nodes
+ \end{enumerate}
+\end{itemize}
+\end{frame}
+
+\pgfdeclareimage[width=0.8\textwidth]{sanbi-cluster}{images/sanbi_cluster.png} 
+\begin{frame}
+\frametitle{Traditional cluster archicture: cluster + SAN}
+\pgfuseimage{sanbi-cluster}
+\end{frame}
+
+\begin{frame}
+\frametitle{Traditional cluster architecture: cluster + SAN (2)}
+\begin{itemize}
+\item SAN device shared by nodes on cluster
+\item Proprietary hardware providing resilience using RAID + redundant hardware on SAN
+\item Upgrade path: buy a bigger SAN
+\end{itemize}
+\end{frame}
+
+\pgfdeclareimage[width=0.8\textwidth]{astrophysics-cluster}{images/astrophysics-cluster.png} 
+\begin{frame}
+\frametitle{UWC Astrophysics architecture}
+\pgfuseimage{astrophysics-cluster}
+\end{frame}
+
+\begin{frame}
+\frametitle{What, no SAN?}
+\begin{itemize}
+\item Budget issues meant that a SAN wasn't available for the Astrophysics cluster
+\pause
+\item Forced to utilise direct-attached storage but...
+\pause
+\item want to access storage from any node in the cluster thus:
+\pause
+\item \emph{Distributed, direct-attached storage}
+\pause
+\item Core requirement: POSIX semantics filesystem accessible anywhere, resilient to failure of single cluster node
+\pause
+\item Investigated three open source distributed filesystems: \emph{MooseFS}, \emph{CephFS} and \emph{GlusterFS} 
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{MooseFS}
+\begin{itemize}
+\item "A fault tolerant, distributed file system"
+\item Single metadata (master) server, multiple metadata backup servers, multiple storage (chunk) servers
+\item Filesystem mount is FUSE (filesystem in userspace) based
+\pause
+\item Resilience is provided by per-directory or per-goal "replica goal"
+\item Large files can be striped across multiple chunk servers and retrieved in parallel
+\item Compression can be configured on a per-directory basis
+\item Available as source, compiles and installs easily on CentOS 6.5
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{CephFS}
+\begin{itemize}
+\item A "distributed object store and filesystem"
+\item Object store based on two daemon types:
+\begin{enumerate}
+\item monitor daemons to maintain state of object pools
+\item object storage daemons to store and retrieve objects
+\end{enumerate}
+\item Filesystem is built on top of object storage and filesystem semantics are provided by metadata server (can be configured in master/slave group with failover support)
+\pause
+\item Historical focus has been on providing block storage interface (RBD) and filesystem labelled "not production ready"
+\item During deployment on Timon cluster uncovered kernel bug in 3.10 kernel that resulted in inconsistent view of filesystem
+\begin{itemize}
+\item Bug fixed by patch in 3.12 Linux kernel, but Timon is running on kernel-lt release (v. 3.10)
+\item Ceph/CephFS is \emph{new} and it can hurt. Expect rapid evolution of CephFS over next 12 months (due to Redhat purchase).
+\end{itemize}
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{GlusterFS}
+\begin{itemize}
+\item A "unified, poly-protocol, scale-out filesystem"
+\item Distributed filesystem with two types of daemon:
+\begin{enumerate}
+\item The \emph{glusterd} storage daemon: provides interface to on disk storage and stores metadata in filesystem (typically XFS) "extended attributes"
+\item The \emph{glusterfsd} filesystem daemon that coordinates a stack of ``translators'' that interface clients with the filesystem, manages replication, etc
+\item Filesystem mount is via NFS, CIFS or as a FUSE mount
+\end{enumerate}
+\item Core of GlusterFS is a distributed hash table (DHT) that maps filenames to block locations
+\pause
+\item Replication policy is set per-volume at volume create time and replication largely happens at write time
+\begin{itemize}
+\item If new servers are added, manual intervention is needed to rebalance replicas across storage
+\end{itemize}
+\item Metadata lookup potentially involves calls to the entire cluster (see \href{https://web.archive.org/web/20140325114833/http://hekafs.org/index.php/2012/03/glusterfs-algorithms-distribution/}{Jeff Darcy's blog on distribution})
+\item Per-volume replication and striping options are less flexible than with Ceph or MooseFS
+\end{itemize}
+\end{frame}
+
+\begin{frame}
+\frametitle{Write and read throughput comparisons}
+\begin{itemize}
+\item Tests were done with \emph{iozone}
+\item Each test was repeated 10 times, and results were compared with modified version of \href{https://code.google.com/p/iozone-results-comparator/}{iozone-results-comparator}
+\item Results are still preliminary and require validation and investigation
+\end{itemize}
+\end{frame}
+\pgfdeclareimage[width=\textwidth]{write}{images/write.png}
+\begin{frame}
+\frametitle{Write comparison}
+\pgfuseimage{write}
+\end{frame}
+
+
+\pgfdeclareimage[width=\textwidth]{read}{images/read.png}
+\begin{frame}
+\frametitle{Read comparison}
+\pgfuseimage{read}
+\end{frame}
+
+
+\begin{frame}
+\frametitle{Conclusion}
+\item The growing availability of open source 
+
+\end{frame}
+% \section{Executive Summary}
+% \begin{frame}
+% \frametitle{UWC Astrophysics Cluster}
+% \begin{itemize}
+% \item 23 worker nodes, 2 master nodes in two clusters
+% \item Built from Supermicro servers, AMD Opteron processors
+% % \pause
+% \item Timon cluster:
+% \begin{itemize}
+% \item 4 worker nodes, 192 cores
+% \item 1024 GB RAM
+% \item 39 TB file system distributed over worker nodes (CephFS)
+% \end{itemize}
+% % \pause
+% \item{Pumbaa cluster:}
+% \begin{itemize}
+% \item 19 worker nodes, 912 cores
+% \item 4864 GB RAM
+% \item 133 TB distributed file system (GlusterFS)
+% \end{itemize}
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Impact of the Astrophysics Cluster}
+% \begin{quotation}
+% [The Astrophysics Cluster] is running forefront hydrodynamic simulations of galaxy formation and cosmology, in order to better understand the physical processes that give rise the universe as observed from the Big Bang until today. A single typical state of the art simulation requires of order one million node hours, and many such simulations need to be run to explore parameter space and to span the relevant dynamic range. The cluster provides the bulk of the computing power required for Prof Dav\'{e}'s group, which includes three postdocs, three students, and numerous collaborators at UWC and elsewhere including the U.S., Germany, and Denmark. This local and flexible resource has been invaluable so far, and is being used essentially constantly at full capacity.
+% \end{quotation}
+% \end{frame}
+
+% \pgfdeclareimage[height=0.8\textheight]{Cluster-Diagram}{images/cluster_diagram.png}
+% \begin{frame}[fragile]
+% \frametitle{Astrophysics Cluster Diagram}
+% \begin{columns}
+% \column{1.2\textwidth}{
+%   % \hspace{-1cm}
+%   \pgfuseimage{Cluster-Diagram}
+% }
+% \end{columns}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Networking}
+% \begin{itemize}
+% \item Each cluster has a 10 Gb Ethernet and a 1 Gb Ethernet switch
+% \item 1 GbE provides management layer
+% \begin{itemize}
+% \item Used for initial software installation, authentication and cluster management
+% \end{itemize}
+% \item 10 GbE used for parallel computing and distributed file system
+% \begin{itemize}
+% \item Each cluster node (and master) has dual 10GbE twisted pair connections
+% \item Allows for independent data paths for MPI (parallel computing) and file system (storage)
+% \end{itemize}
+% \item Two clusters are connected by VLAN operating on ICS network core switch
+% \begin{itemize}
+% \item No high throughput or low latency traffic between clusters
+% \end{itemize}
+% \end{itemize}
+% \end{frame}
+
+% \section{Cluster Deployment and Management}
+
+% \pgfdeclareimage[width=\textwidth]{Cluster-Management}{images/cluster_management.png}
+% \begin{frame}
+% \frametitle{Cluster Deployment and Management}
+% \pgfuseimage{Cluster-Management}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Cluster Deployment}
+% \begin{itemize}
+% \item All cluster nodes run CentOS 6.5
+% \item Installation was done using \textbf{cobbler}:
+% \begin{itemize}
+% \item cobbler on master1 manages install images
+% \item DHCP and TFTP servers on master1 provide images to install when machines boot using PXE boot
+% \item Allows for hands-free install of base operating system: only manual intervention is post-installation networking configuration
+% \end{itemize}
+% \item Post-install configuration done using \textbf{ansible}
+% \begin{itemize}
+% \item With Ansible system configuration is scripted and pushed out to whole cluster in a single command
+% \end{itemize}
+% \item Timon cluster was prototype environment, lessons from Timon deployment were used to streamline larger Pumbaa deployment
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Cluster Management}
+% \begin{itemize}
+% \item Manager servers are virtual machines that themselves run on master1 and master2 nodes
+% \begin{itemize}
+% \item Different software roles are deployed on independent machines, with no clashing dependencies
+% \item By using virtual machines, the resource limits (disk/CPU/RAM) of management servers can be specified up front
+% \end{itemize}
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Cluster Authentication and Name Services}
+% \begin{itemize}
+% \item All machines in cluster operate within \textbf{astroclust.uwc.ac.za} domain and private IP network space
+% \item Authentication is managed by \textbf{FreeIPA} running on auth1 and auth2 VMs
+% \item FreeIPA combines LDAP server (389DS), DNS server (bind) and Kerberos to manager user and machine identity and authorisation
+% \item User and machine records can be created and edited using command-line tools or web interface
+% \item UWC DNS provides secondary DNS, and cluster queries UWC DNS, ensuring that DNS continues to work even if master1 or master2 are down
+% \item FreeIPA servers are configured with master-master replication, ensuring high availability of authentication service
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Monitoring the Astrophysics Cluster}
+% \begin{itemize}
+% \item System utilisation is captured and graphed using \textbf{Ganglia}
+% \item Utilisation and service availability is also monitoring using SNMP
+% \item ICS OpManager sends alerts to support staff whenever an element of the Cluster is down
+% \end{itemize}
+% \end{frame}
+
+% \section{Cluster Computing}
+
+% \begin{frame}
+% \frametitle{Cluster Scheduler environment}
+% \begin{itemize}
+% \item Computing is managed using the \textbf{Torque} batch scheduler
+% \begin{itemize}
+% \item Extremely common scheduler in high performance computing (HPC) environments, so users can re-use existing skills
+% \item Integrates with OpenMPI for parallel job execution
+% \end{itemize}
+% \item Software installations are managed using the \textbf{Environment Modules} package
+% \begin{itemize}
+% \item Scientific software is installed on /opt file system that is shared across all compute nodes in a cluster
+% \end{itemize}
+
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Running jobs on the cluster}
+% \begin{itemize}
+% \item Single manager node (manager1) controls execution on both clusters
+% \begin{itemize}
+% \item Clusters operate as independent computing units, with nodes on Timon and Pumbaa being addressed by different batch queues
+% \item Small user community has meant that scheduling and resource allocation can be kept simple
+% \end{itemize}
+% \item \textbf{OpenMPI} allows MPI-enabled programs to run in parallel, using up to 912 CPU cores (whole of Pumbaa)
+% \begin{itemize}
+% \item MPI locked to always use 10GbE network
+% \item In future will partition 10GbE as separate MPI and storage VLANs to keep MPI latency as low as possible
+% \end{itemize}
+% \end{itemize}
+% \end{frame}
+
+% \section{Cluster Storage}
+
+% \begin{frame}
+% \frametitle{Cluster Storage}
+% \begin{itemize}
+% \item Cluster purchased without providing external storage
+% \item This required investigation of distributed file systems (DFS):
+% \begin{itemize}
+% \item Storage is distributed across the worker nodes in each cluster
+% \end{itemize}
+% \item Three different DFS solutions were investigated:
+% \begin{itemize}
+% \item \textbf{MooseFS} (didn't scale to 10GbE speeds)
+% \item \textbf{CephFS} (in use on Timon)
+% \item \textbf{GlusterFS} (in use on Pumbaa)
+% \end{itemize}
+% \item Further investigation: \textbf{BeeGFS} on Timon
+% \end{itemize}
+% \end{frame}
+
+% \pgfdeclareimage[width=0.9\textwidth]{Timon-Ceph}{images/ceph_cluster.png}
+% \begin{frame}
+% \frametitle{CephFS (on Timon)}
+% \pgfuseimage{Timon-Ceph}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{CephFS architecture}
+% \begin{itemize}
+% \item \textbf{Ceph} is an open source distributed object store and file system
+% \begin{itemize}
+% \item Object storage on disk is managed by Object Storage Daemons (OSDs)
+% \item Objects are looked up by querying a distributed hash table that is managed by Monitor Daemons (MONs)
+% \item The CephFS file system translates file system paths to object IDs using Metadata Server Daemons (MDSs)
+% \end{itemize}
+% \item{On Timon each server is a client and mounts the distributed file system that provides /data, /home and /opt}
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Problems with Ceph on Timon}
+% \begin{itemize}
+% \item A cluster as small as Timon doesn't need 5 MONs, 3 would be adequate
+% \item Mounting /home as a DFS means that running jobs and interactive users on master1 share the same file system
+% \begin{itemize}
+% \item Interactive usage patterns (e.g. metadata access for commands such as ls) conflict with the bulk data writes of HPC jobs
+% \item As a result users experience poor response when using master1 interactively
+% \end{itemize}
+% \item CephFS current release is buggy e.g. files become invisible
+% \begin{itemize}
+% \item This might change in the next 12 months: RedHat, purchased Inktank, the original Ceph developers, and have devoted more developers to CephFS
+% \end{itemize}
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{Future of storage for Timon cluster}
+% \begin{itemize}
+% \item CephFS will be replaced, possibly by \textbf{BeeGFS}
+% \begin{itemize}
+% \item BeeGFS (formerly FhGFS) is a high-performance parallel file system
+% \end{itemize}
+% \item BeeGFS promises better metadata performance than GlusterFS and more stability than CephFS
+% \item Caveat: BeeGFS lacks high availability (HA) features that CephFS and GlusterFS provide, but thus far we've had good uptime and HA is low priority
+% \end{itemize}
+% \end{frame}
+
+% \pgfdeclareimage[width=0.9\textwidth]{Pumbaa-GlusterFS}{images/glusterfs_cluster.png}
+% \begin{frame}
+% \frametitle{GlusterFS on Pumbaa}
+% \pgfuseimage{Pumbaa-GlusterFS}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{GlusterFS architecture}
+% \begin{itemize}
+% \item \textbf{GlusterFS} is (another) open source distributed file system
+% \item Data and metadata is stored in storage bricks that are arranged to create volumes
+% \item Pumbaa /data is a single GlusterFS volume sliced across the worker nodes of the cluster, offering 133 TB of storage
+% \item Each brick of /data is replicated on two worker nodes to ensure file system high availability
+% \item /home on Pumbaa is NFS mounted volume provided by master2, to avoid the problem of DFS load slowing down interactive use
+% \end{itemize}
+% \end{frame}
+
+% \begin{frame}
+% \frametitle{GlusterFS problems}
+% \begin{itemize}
+% \item GlusterFS has poor metadata performance
+% \begin{itemize}
+% \item But: HPC operations are mostly bulk data reads/writes, not metadata access
+% \end{itemize}
+% \item If storage elements are replaced, GlusterFS must be manually rebalanced
+% \item GlusterFS lacks some of the sophistication of Ceph, but for the Astrophysics HPC use case it ``just works''
+% \end{itemize}
+% \end{frame}
+
+% \section{Conclusion}
+% \begin{frame}
+% \frametitle{Conclusion}
+% \begin{itemize}
+% \item UWC ICS has broken new ground by providing HPC facilities for UWC Astrophysics
+% \item Using commodity hardware and open source software has kept cost down
+% \item Automation tools (cobbler and ansible) allow fast and flexible deployment and cluster configuration
+% \item Downtime has been minimal and has largely been related to hardware failure and power outages
+% \item The cluster is in continual use at close to full capacity
+% \item Experience gained in building distributed file systems is already being used to build low cost scientific storage elsewhere at UWC  (SANBI)
+% \item Spare capacity on the cluster is being used to accommodate additional user groups at UWC
+% \end{itemize}
+% \end{frame}
+
+\end{document}
+
