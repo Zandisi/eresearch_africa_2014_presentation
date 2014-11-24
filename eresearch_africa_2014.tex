@@ -129,6 +129,8 @@ Bellville, South Africa\\
 \end{itemize}
 \end{frame}
 
+\section{The UWC Astrophysics cluster: design}
+
 \begin{frame}
 \frametitle{The UWC Astrophysics cluster}
 \begin{itemize}
@@ -187,6 +189,7 @@ Bellville, South Africa\\
 \end{itemize}
 \end{frame}
 
+\section{Distributed filesystems}
 \begin{frame}
 \frametitle{MooseFS}
 \begin{itemize}
@@ -221,27 +224,39 @@ Bellville, South Africa\\
 \end{itemize}
 \end{frame}
 
+\pgfdeclareimage[width=0.8\textwidth]{ceph-deployment}{images/ceph_cluster.png}
+\begin{frame}
+\frametitle{Ceph deployment}
+\pgfuseimage{ceph-deployment}
+\end{frame}
+
 \begin{frame}
 \frametitle{GlusterFS}
 \begin{itemize}
-\item A "unified, poly-protocol, scale-out filesystem"
-\item Distributed filesystem with two types of daemon:
+\item A ``unified, poly-protocol, scale-out filesystem'', very easy to deploy, just two daemons:
 \begin{enumerate}
 \item The \emph{glusterd} storage daemon: provides interface to on disk storage and stores metadata in filesystem (typically XFS) "extended attributes"
-\item The \emph{glusterfsd} filesystem daemon that coordinates a stack of ``translators'' that interface clients with the filesystem, manages replication, etc
-\item Filesystem mount is via NFS, CIFS or as a FUSE mount
+\item The \emph{glusterfsd} filesystem daemon that coordinates a stack of ``translators'' and ultimately client access
 \end{enumerate}
-\item Core of GlusterFS is a distributed hash table (DHT) that maps filenames to block locations
+\item Filesystem mount is via NFS, CIFS or as a FUSE mount
+\item Built around a distributed hash table (DHT), metadata stored along with data
 \pause
 \item Replication policy is set per-volume at volume create time and replication largely happens at write time
 \begin{itemize}
 \item If new servers are added, manual intervention is needed to rebalance replicas across storage
 \end{itemize}
-\item Metadata lookup potentially involves calls to the entire cluster (see \href{https://web.archive.org/web/20140325114833/http://hekafs.org/index.php/2012/03/glusterfs-algorithms-distribution/}{Jeff Darcy's blog on distribution})
-\item Per-volume replication and striping options are less flexible than with Ceph or MooseFS
+\item \small{Metadata lookup potentially queries the entire cluster (see \href{https://web.archive.org/web/20140325114833/http://hekafs.org/index.php/2012/03/glusterfs-algorithms-distribution/}{Jeff Darcy's blog on distribution})}
+\item Replication and striping options are less flexible than with Ceph or MooseFS
 \end{itemize}
 \end{frame}
 
+\pgfdeclareimage[width=0.8\textwidth]{glusterfs-deployment}{images/glusterfs_cluster.png}
+\begin{frame}
+\frametitle{GlusterFS deployment}
+\pgfuseimage{glusterfs-deployment}
+\end{frame}
+
+\section{DFS performance}
 \begin{frame}
 \frametitle{Write and read throughput comparisons}
 \begin{itemize}
@@ -263,10 +278,23 @@ Bellville, South Africa\\
 \pgfuseimage{read}
 \end{frame}
 
-
 \begin{frame}
 \frametitle{Conclusion}
-\item The growing availability of open source 
+\begin{itemize}
+\item Distributed, direct attached storage offers a viable alternative to a dedicated SAN for a compute cluster
+\pause
+\begin{itemize}
+\item Impact of storage CPU usage on HPC / scientific output hasn't been quantified yet
+\end{itemize}
+\pause
+\item \emph{CephFS} shows promising performance but currently lacks stability and requires recent Linux kernel
+\pause 
+\item More research is needed on tuning to maximise performance under different workloads
+\pause
+\begin{itemize}
+\item Examining implementation and tradeoffs in DFS would make a good computer science research project
+\end{itemize}
+\end{itemize}
 
 \end{frame}
 % \section{Executive Summary}
